@@ -1268,57 +1268,11 @@ import {
 import { hostNameRegexPattern, relativeTimeFormatter } from "../util-frontend";
 import HiddenInput from "../components/HiddenInput.vue";
 import EditMonitorConditions from "../components/EditMonitorConditions.vue";
+import { monitorDefaults, createMonitorDefaults } from "../util/monitor-defaults";
 
 const toast = useToast();
 
 const pushTokenLength = 32;
-
-const monitorDefaults = {
-    type: "http",
-    name: "",
-    parent: null,
-    url: "https://",
-    method: "GET",
-    ipFamily: null,
-    interval: 60,
-    humanReadableInterval: relativeTimeFormatter.secondsToHumanReadableFormat(60),
-    retryInterval: 60,
-    resendInterval: 0,
-    maxretries: 0,
-    notificationIDList: {},
-    ignoreTls: false,
-    upsideDown: false,
-    expiryNotification: false,
-    maxredirects: 10,
-    accepted_statuscodes: [ "200-299" ],
-    dns_resolve_type: "A",
-    dns_resolve_server: "1.1.1.1",
-    docker_container: "",
-    docker_host: null,
-    proxyId: null,
-    mqttUsername: "",
-    mqttPassword: "",
-    mqttTopic: "",
-    mqttWebsocketPath: "",
-    mqttSuccessMessage: "",
-    mqttCheckType: "keyword",
-    authMethod: null,
-    oauth_auth_method: "client_secret_basic",
-    httpBodyEncoding: "json",
-    kafkaProducerBrokers: [],
-    kafkaProducerSaslOptions: {
-        mechanism: "None",
-    },
-    cacheBust: false,
-    kafkaProducerSsl: false,
-    kafkaProducerAllowAutoTopicCreation: false,
-    gamedigGivenPortOnly: true,
-    remote_browser: null,
-    rabbitmqNodes: [],
-    rabbitmqUsername: "",
-    rabbitmqPassword: "",
-    conditions: []
-};
 
 export default {
     components: {
@@ -1987,13 +1941,7 @@ message HealthCheckResponse {
         init() {
             if (this.isAdd) {
 
-                this.monitor = {
-                    ...monitorDefaults,
-                    ping_count: 3,
-                    ping_numeric: true,
-                    packetSize: 56,
-                    ping_per_request_timeout: 2,
-                };
+                this.monitor = createMonitorDefaults();
 
                 if (this.$root.proxyList && !this.monitor.proxyId) {
                     const proxy = this.$root.proxyList.find(proxy => proxy.default);

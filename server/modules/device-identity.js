@@ -197,6 +197,7 @@ async function attemptOnvif({ urls, username, password, timeout }) {
 
             let streamUri;
             let profileToken;
+            let snapshotUri;
 
             if (mediaXAddr) {
                 try {
@@ -244,6 +245,31 @@ async function attemptOnvif({ urls, username, password, timeout }) {
                 }
             }
 
+            if (mediaXAddr && profileToken) {
+                try {
+                    const snapshotEnvelope = buildSoapEnvelope(
+                        `<trt:GetSnapshotUri>` +
+                        `<trt:ProfileToken>${profileToken}</trt:ProfileToken>` +
+                        `</trt:GetSnapshotUri>`,
+                        { trt: MEDIA_WSDL }
+                    );
+
+                    const snapshotResponse = await axios.post(mediaXAddr, snapshotEnvelope, {
+                        ...axiosConfig,
+                        responseType: "text",
+                    });
+
+                    if (snapshotResponse.status === 200) {
+                        const $snapshot = cheerio.load(snapshotResponse.data, { xmlMode: true });
+                        snapshotUri = findFirstTag($snapshot, "Uri");
+                    } else {
+                        errors.push(`${mediaXAddr}: HTTP ${snapshotResponse.status} (snapshot uri)`);
+                    }
+                } catch (error) {
+                    errors.push(`${mediaXAddr}: ${error.message}`);
+                }
+            }
+
             return {
                 success: true,
                 data: {
@@ -258,6 +284,7 @@ async function attemptOnvif({ urls, username, password, timeout }) {
                         mediaXAddr,
                         profileToken,
                         streamUri,
+                        snapshotUri,
                     },
                 },
             };
@@ -381,6 +408,104 @@ async function probeDeviceIdentity(payload) {
     };
 }
 
+/**
+ * Fetch an ONVIF snapshot for the provided payload.
+ * @param {object} payload Payload containing device connection details
+ * @returns {Promise<object>} Snapshot data
+ */
+async function fetchOnvifSnapshot(payload = {}) {
+    const attempts = [];
+    const timeout = Number(payload.timeout) || 8000;
+    const axiosConfig = {
+        responseType: "arraybuffer",
+        timeout,
+        httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+        validateStatus: () => true,
+    };
+
+    if (payload.username) {
+        axiosConfig.auth = {
+            username: payload.username,
+            password: payload.password || "",
+        };
+    }
+
+    const baseCandidates = resolveCandidateUrls(payload);
+    const snapshotCandidates = new Set();
+
+    if (payload.snapshotUri) {
+        snapshotCandidates.add(payload.snapshotUri);
+    }
+
+    if (payload.onvif?.snapshotUri) {
+        snapshotCandidates.add(payload.onvif.snapshotUri);
+    }
+
+    let onvifInfo = payload.onvif || null;
+
+    if (!snapshotCandidates.size && baseCandidates.length) {
+        const onvifResult = await attemptOnvif({
+            urls: baseCandidates,
+            username: payload.username,
+            password: payload.password,
+            timeout,
+        });
+
+        if (onvifResult.success) {
+            onvifInfo = onvifResult.data.onvif;
+            if (onvifResult.data.onvif?.snapshotUri) {
+                snapshotCandidates.add(onvifResult.data.onvif.snapshotUri);
+            }
+        } else if (onvifResult.errors?.length) {
+            onvifResult.errors.forEach((error) => attempts.push(error));
+        }
+    }
+
+    const baseForRelative = onvifInfo?.mediaXAddr || onvifInfo?.serviceUrl || baseCandidates[0];
+
+    for (const candidate of snapshotCandidates) {
+        if (!candidate) {
+            continue;
+        }
+
+        let resolvedUrl = candidate;
+
+        try {
+            if (baseForRelative) {
+                resolvedUrl = new URL(candidate, baseForRelative).href;
+            } else {
+                resolvedUrl = new URL(candidate).href;
+            }
+        } catch (error) {
+            attempts.push(`${candidate}: ${error.message}`);
+            continue;
+        }
+
+        try {
+            const response = await axios.get(resolvedUrl, axiosConfig);
+
+            if (response.status === 200) {
+                const buffer = Buffer.isBuffer(response.data) ? response.data : Buffer.from(response.data);
+                const contentType = response.headers?.["content-type"] || "image/jpeg";
+                return {
+                    contentType,
+                    base64: buffer.toString("base64"),
+                    url: resolvedUrl,
+                };
+            }
+
+            attempts.push(`${resolvedUrl}: HTTP ${response.status}`);
+        } catch (error) {
+            attempts.push(`${resolvedUrl}: ${error.message}`);
+        }
+    }
+
+    const error = new Error(attempts.length ? attempts.join("; ") : "Snapshot not available");
+    error.attempts = attempts;
+    throw error;
+}
+
 module.exports = {
     probeDeviceIdentity,
+    fetchOnvifSnapshot,
 };

@@ -4,7 +4,7 @@ const { sendInfo } = require("../client");
 const { checkLogin } = require("../util-server");
 const GameResolver = require("gamedig/lib/GameResolver");
 const { testChrome } = require("../monitor-types/real-browser-monitor-type");
-const { probeDeviceIdentity } = require("../modules/device-identity");
+const { probeDeviceIdentity, fetchOnvifSnapshot } = require("../modules/device-identity");
 const fsAsync = require("fs").promises;
 const path = require("path");
 
@@ -98,6 +98,23 @@ module.exports.generalSocketHandler = (socket, server) => {
             callback({
                 ok: true,
                 result,
+            });
+        } catch (e) {
+            callback({
+                ok: false,
+                msg: e.message,
+                attempts: e.attempts,
+            });
+        }
+    });
+
+    socket.on("fetchOnvifSnapshot", async (payload, callback) => {
+        try {
+            checkLogin(socket);
+            const snapshot = await fetchOnvifSnapshot(payload || {});
+            callback({
+                ok: true,
+                snapshot,
             });
         } catch (e) {
             callback({

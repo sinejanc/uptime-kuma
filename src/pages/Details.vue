@@ -174,6 +174,17 @@
                         {{ $t("viewOnvifStream") }}
                     </a>
 
+                    <button
+                        v-if="canRequestSnapshot"
+                        class="btn btn-outline-success"
+                        type="button"
+                        :disabled="snapshotLoading"
+                        @click="fetchSnapshot"
+                    >
+                        <i v-if="snapshotLoading" class="fas fa-spinner fa-spin me-1"></i>
+                        {{ $t("fetchOnvifSnapshot") }}
+                    </button>
+
                     <span v-if="deviceProbeLoading" class="text-muted">{{ $t("deviceProbeRunning") }}</span>
                 </div>
 
@@ -181,6 +192,10 @@
 
                 <div v-if="deviceProbeError" class="alert alert-danger mt-3" role="alert">
                     {{ $t("deviceProbeFailed", [ deviceProbeError ]) }}
+                </div>
+
+                <div v-if="snapshotError" class="alert alert-danger mt-3" role="alert">
+                    {{ $t("snapshotFailed", [ snapshotError ]) }}
                 </div>
 
                 <div v-if="deviceProbeResult" class="alert alert-info mt-3" role="alert">
@@ -227,6 +242,23 @@
                             <summary>{{ $t("deviceProbeAttempts") }}</summary>
                             <ul class="mt-2 mb-0 ps-3">
                                 <li v-for="(attempt, index) in deviceProbeAttempts" :key="`details-attempt-${index}`">{{ attempt }}</li>
+                            </ul>
+                        </details>
+                    </template>
+
+                    <div v-if="snapshotDataUrl" class="onvif-snapshot-container mt-3 text-center">
+                        <img
+                            :src="snapshotDataUrl"
+                            class="img-fluid rounded border"
+                            :alt="$t('snapshotAlt', [ monitor.name ])"
+                        >
+                    </div>
+
+                    <template v-if="snapshotAttempts.length">
+                        <details class="mt-3">
+                            <summary>{{ $t("snapshotAttempts") }}</summary>
+                            <ul class="mt-2 mb-0 ps-3">
+                                <li v-for="(attempt, index) in snapshotAttempts" :key="`snapshot-attempt-${index}`">{{ attempt }}</li>
                             </ul>
                         </details>
                     </template>
@@ -631,6 +663,10 @@ export default {
             deviceProbeResult: null,
             deviceProbeError: null,
             deviceProbeAttemptsRaw: [],
+            snapshotLoading: false,
+            snapshotResult: null,
+            snapshotError: null,
+            snapshotAttempts: [],
         };
     },
     computed: {
@@ -737,6 +773,10 @@ export default {
             return hasHostname || Boolean(this.sanitizedMonitorUrl);
         },
 
+        canRequestSnapshot() {
+            return this.supportsDeviceProbe;
+        },
+
         sanitizedMonitorUrl() {
             const url = this.monitor?.url;
 
@@ -822,6 +862,15 @@ export default {
             }
 
             return this.deviceProbeAttemptsRaw;
+        },
+
+        snapshotDataUrl() {
+            if (!this.snapshotResult?.base64) {
+                return null;
+            }
+
+            const mime = this.snapshotResult.contentType || "image/jpeg";
+            return `data:${mime};base64,${this.snapshotResult.base64}`;
         },
 
         descriptionHTML() {
@@ -910,6 +959,7 @@ export default {
             this.deviceProbeError = null;
             this.deviceProbeResult = null;
             this.deviceProbeAttemptsRaw = [];
+            this.resetSnapshot();
             this.deviceProbeLoading = true;
 
             const payload = this.buildDeviceProbePayload();
@@ -933,6 +983,47 @@ export default {
 
             if (clearAttempts) {
                 this.deviceProbeAttemptsRaw = [];
+            }
+
+            this.resetSnapshot(clearAttempts);
+        },
+
+        fetchSnapshot() {
+            if (this.snapshotLoading) {
+                return;
+            }
+
+            const payload = {
+                ...this.buildDeviceProbePayload(),
+                onvif: this.deviceProbeResult?.onvif,
+                snapshotUri: this.deviceProbeResult?.onvif?.snapshotUri,
+            };
+
+            this.snapshotLoading = true;
+            this.snapshotError = null;
+            this.snapshotAttempts = [];
+
+            this.$root.getSocket().emit("fetchOnvifSnapshot", payload, (res) => {
+                this.snapshotLoading = false;
+
+                if (res.ok) {
+                    this.snapshotResult = res.snapshot;
+                    this.snapshotAttempts = res.attempts || [];
+                } else {
+                    this.snapshotError = res.msg;
+                    this.snapshotAttempts = res.attempts || [];
+                    this.snapshotResult = null;
+                }
+            });
+        },
+
+        resetSnapshot(clearAttempts = true) {
+            this.snapshotLoading = false;
+            this.snapshotResult = null;
+            this.snapshotError = null;
+
+            if (clearAttempts) {
+                this.snapshotAttempts = [];
             }
         },
         /**
@@ -1282,6 +1373,11 @@ table {
     .col {
         margin: 20px 0;
     }
+}
+
+.onvif-snapshot-container img {
+    max-height: 240px;
+    object-fit: contain;
 }
 
 @media (max-width: 550px) {
