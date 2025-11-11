@@ -367,6 +367,58 @@ export default {
                     }
                     break;
                 }
+                case "onvif": {
+                    monitor.type = normalizedType;
+                    let url = target;
+                    const hasScheme = url.includes("://");
+
+                    if (!hasScheme) {
+                        url = `http://${url}`;
+                    }
+
+                    let parsed;
+
+                    try {
+                        parsed = new URL(url);
+                    } catch (error) {
+                        return {
+                            ok: false,
+                            error: this.$t("bulkImportErrorInvalidUrl"),
+                        };
+                    }
+
+                    if (!parsed.pathname || parsed.pathname === "/") {
+                        parsed.pathname = "/onvif/device_service";
+                        parsed.search = "";
+                        parsed.hash = "";
+                    }
+
+                    monitor.url = parsed.toString();
+                    monitor.hostname = parsed.hostname;
+
+                    if (parsed.port) {
+                        monitor.port = parsed.port;
+                    } else {
+                        monitor.port = parsed.protocol === "https:" ? "443" : "80";
+                    }
+
+                    if (rawExtra) {
+                        const username = rawExtra.trim();
+                        if (username) {
+                            monitor.basic_auth_user = username;
+                        }
+                    }
+
+                    if (rawExtra2) {
+                        const password = rawExtra2.trim();
+                        if (password) {
+                            monitor.basic_auth_pass = password;
+                        }
+                    }
+
+                    summaryTarget = monitor.url;
+                    break;
+                }
                 default:
                     return {
                         ok: false,
@@ -394,7 +446,8 @@ export default {
                 case "icmp":
                     return "ping";
                 case "camera":
-                    return "ping";
+                case "rtsp":
+                    return "onvif";
                 case "tcp":
                     return "port";
                 default:
