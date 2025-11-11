@@ -262,6 +262,7 @@ export default {
         buildMonitorPayload(parts) {
             const [ rawType, rawName, rawTarget, rawExtra, rawExtra2 ] = parts;
             const type = (rawType || "").toLowerCase();
+            const summaryType = rawType ? rawType.trim() : type;
 
             if (!type) {
                 return {
@@ -386,7 +387,7 @@ export default {
                 ok: true,
                 monitor,
                 summary: {
-                    type: monitor.type,
+                    type: summaryType || monitor.type,
                     name: monitor.name,
                     target: summaryTarget,
                 },
@@ -429,11 +430,9 @@ export default {
                     successCount++;
                 }
 
-                let message = success
+                const message = success
                     ? this.$t("bulkImportStatusSuccess")
-                    : response?.msgi18n
-                        ? this.$t(response.msg)
-                        : response?.msg || this.$t("bulkImportStatusFailed");
+                    : this.formatResponseMessage(response, "bulkImportStatusFailed");
 
                 this.resultLookup = {
                     ...this.resultLookup,
@@ -456,8 +455,26 @@ export default {
             } else if (successCount > 0) {
                 toast.warning(this.$t("bulkImportPartialToast", [ successCount, this.entries.length - successCount ]));
             } else {
-                toast.error(this.$t("bulkImportFailedToast"));
+                const failureMessages = Object.values(this.resultLookup)
+                    .filter((result) => !result.success && result.message)
+                    .map((result) => result.message);
+                const fallback = this.$t("bulkImportFailedToast");
+                toast.error(failureMessages[0] || fallback);
             }
+        },
+        formatResponseMessage(response, fallbackKey) {
+            if (!response) {
+                return this.$t(fallbackKey);
+            }
+
+            if (response.msgi18n) {
+                if (response.msg != null && typeof response.msg === "object") {
+                    return this.$t(response.msg.key, response.msg.values);
+                }
+                return this.$t(response.msg);
+            }
+
+            return response.msg || this.$t(fallbackKey);
         },
     },
 };

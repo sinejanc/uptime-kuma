@@ -91,8 +91,9 @@ async function attemptSSH({ hostname, port, timeout }) {
     }
 
     return await new Promise((resolve) => {
-        const socket = net.createConnection({ host: hostname, port, timeout });
+        const socket = net.createConnection({ host: hostname, port });
         let settled = false;
+        const effectiveTimeout = Number(timeout) || 8000;
 
         const finish = (result) => {
             if (!settled) {
@@ -102,12 +103,18 @@ async function attemptSSH({ hostname, port, timeout }) {
             }
         };
 
+        socket.setTimeout(effectiveTimeout);
+
         socket.once("error", (error) => {
             finish({ success: false, error: `SSH connection failed: ${error.message}` });
         });
 
         socket.once("timeout", () => {
             finish({ success: false, error: "SSH connection timed out" });
+        });
+
+        socket.once("close", () => {
+            finish({ success: false, error: "SSH connection closed" });
         });
 
         socket.once("data", (data) => {
