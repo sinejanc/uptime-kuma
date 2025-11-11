@@ -86,6 +86,8 @@
     "deviceCapabilityONVIF": "ONVIF kamera desteği",
     "deviceCapabilitySSH": "SSH yönetimi (port {0})",
     "onvifStreamUri": "ONVIF akış URI'si",
+    "openOnvifService": "ONVIF servisini aç",
+    "viewOnvifStream": "ONVIF akışını görüntüle",
     "sshBanner": "SSH başlığı",
     "deviceProbeAttempts": "Algılama denemeleri",
     "Heartbeat Interval": "Servis Test Aralığı",

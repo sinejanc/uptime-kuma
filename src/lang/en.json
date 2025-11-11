@@ -87,6 +87,8 @@
     "deviceCapabilityONVIF": "ONVIF camera support",
     "deviceCapabilitySSH": "SSH management (port {0})",
     "onvifStreamUri": "ONVIF stream URI",
+    "openOnvifService": "Open ONVIF service",
+    "viewOnvifStream": "View ONVIF stream",
     "sshBanner": "SSH banner",
     "deviceProbeAttempts": "Detection attempts",
     "Heartbeat Interval": "Heartbeat Interval",
