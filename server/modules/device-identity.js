@@ -294,6 +294,7 @@ async function attemptOnvif({ urls, username, password, timeout }) {
                         snapshotUri,
                     },
                 },
+                errors,
             };
         } catch (error) {
             const message = error.response?.status ? `HTTP ${error.response.status}` : error.message;
@@ -352,31 +353,33 @@ async function probeDeviceIdentity(payload) {
     const timeout = Number(payload.timeout) || 8000;
     const candidateUrls = resolveCandidateUrls(payload);
 
-    const onvifResult = await attemptOnvif({
-        urls: candidateUrls,
-        username: payload.username,
-        password: payload.password,
-        timeout,
-    });
+    const [ onvifResult, sshResult ] = await Promise.all([
+        attemptOnvif({
+            urls: candidateUrls,
+            username: payload.username,
+            password: payload.password,
+            timeout,
+        }),
+        attemptSSH({
+            hostname: payload.hostname,
+            port: Number(payload.sshPort) || Number(payload.port) || 22,
+            timeout,
+        }),
+    ]);
 
     let identity = null;
-    const capabilities = [];
+    const capabilitySet = new Set();
     let onvif = null;
 
     if (onvifResult.success) {
         identity = onvifResult.data;
-        capabilities.push("onvif");
+        capabilitySet.add("onvif");
         onvif = onvifResult.data.onvif;
-    } else if (onvifResult.errors?.length) {
-        attempts.push(...onvifResult.errors);
     }
 
-    const sshPort = Number(payload.sshPort) || Number(payload.port) || 22;
-    const sshResult = await attemptSSH({
-        hostname: payload.hostname,
-        port: sshPort,
-        timeout,
-    });
+    if (onvifResult.errors?.length) {
+        attempts.push(...onvifResult.errors);
+    }
 
     let ssh;
 
@@ -389,7 +392,7 @@ async function probeDeviceIdentity(payload) {
                 ssh: sshResult.data.ssh,
             };
         }
-        capabilities.push("ssh");
+        capabilitySet.add("ssh");
         ssh = sshResult.data.ssh;
     } else if (sshResult.error) {
         attempts.push(sshResult.error);
@@ -410,7 +413,7 @@ async function probeDeviceIdentity(payload) {
         hardwareId: identity.hardwareId,
         onvif,
         ssh,
-        capabilities,
+        capabilities: Array.from(capabilitySet),
         attempts,
     };
 }
@@ -463,6 +466,9 @@ async function fetchOnvifSnapshot(payload = {}) {
             if (onvifResult.data.onvif?.snapshotUri) {
                 snapshotCandidates.add(onvifResult.data.onvif.snapshotUri);
             }
+            if (onvifResult.errors?.length) {
+                attempts.push(...onvifResult.errors);
+            }
         } else if (onvifResult.errors?.length) {
             onvifResult.errors.forEach((error) => attempts.push(error));
         }
@@ -495,9 +501,12 @@ async function fetchOnvifSnapshot(payload = {}) {
                 const buffer = Buffer.isBuffer(response.data) ? response.data : Buffer.from(response.data);
                 const contentType = response.headers?.["content-type"] || "image/jpeg";
                 return {
-                    contentType,
-                    base64: buffer.toString("base64"),
-                    url: resolvedUrl,
+                    snapshot: {
+                        contentType,
+                        base64: buffer.toString("base64"),
+                        url: resolvedUrl,
+                    },
+                    attempts,
                 };
             }
 

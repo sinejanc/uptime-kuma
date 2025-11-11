@@ -111,10 +111,11 @@ module.exports.generalSocketHandler = (socket, server) => {
     socket.on("fetchOnvifSnapshot", async (payload, callback) => {
         try {
             checkLogin(socket);
-            const snapshot = await fetchOnvifSnapshot(payload || {});
+            const { snapshot, attempts } = await fetchOnvifSnapshot(payload || {});
             callback({
                 ok: true,
                 snapshot,
+                attempts,
             });
         } catch (e) {
             callback({

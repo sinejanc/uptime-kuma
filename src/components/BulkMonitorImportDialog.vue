@@ -262,7 +262,8 @@ export default {
         buildMonitorPayload(parts) {
             const [ rawType, rawName, rawTarget, rawExtra, rawExtra2 ] = parts;
             const type = (rawType || "").toLowerCase();
-            const summaryType = rawType ? rawType.trim() : type;
+            const normalizedType = this.normalizeMonitorType(type);
+            const summaryType = rawType ? rawType.trim() : normalizedType;
 
             if (!type) {
                 return {
@@ -282,15 +283,15 @@ export default {
             const monitor = this.createMonitorBase();
             let summaryTarget = target;
 
-            switch (type) {
+            switch (normalizedType) {
                 case "ping":
                 case "tailscale-ping":
-                    monitor.type = type;
+                    monitor.type = normalizedType;
                     monitor.hostname = target;
                     delete monitor.url;
                     break;
                 case "port": {
-                    monitor.type = type;
+                    monitor.type = normalizedType;
                     let host = target;
                     let port = rawExtra ? Number(rawExtra) : null;
 
@@ -333,16 +334,14 @@ export default {
                 case "keyword":
                 case "json-query":
                 case "real-browser": {
-                    monitor.type = type;
+                    monitor.type = normalizedType;
                     let url = target;
-                    if (!url.includes("://")) {
-                        url = `http://${url}`;
-                    }
+                    url = this.ensureUrlWithProtocol(url, type);
                     monitor.url = url;
                     delete monitor.hostname;
                     summaryTarget = url;
 
-                    if (type === "keyword") {
+                    if (normalizedType === "keyword") {
                         const keyword = (rawExtra || "").trim();
                         if (!keyword) {
                             return {
@@ -353,7 +352,7 @@ export default {
                         monitor.keyword = keyword;
                     }
 
-                    if (type === "json-query") {
+                    if (normalizedType === "json-query") {
                         const jsonPath = (rawExtra || "").trim();
                         if (!jsonPath) {
                             return {
@@ -368,11 +367,6 @@ export default {
                     }
                     break;
                 }
-                case "camera":
-                    monitor.type = "ping";
-                    monitor.hostname = target;
-                    delete monitor.url;
-                    break;
                 default:
                     return {
                         ok: false,
@@ -392,6 +386,50 @@ export default {
                     target: summaryTarget,
                 },
             };
+        },
+        normalizeMonitorType(type) {
+            switch (type) {
+                case "https":
+                    return "http";
+                case "icmp":
+                    return "ping";
+                case "camera":
+                    return "ping";
+                case "tcp":
+                    return "port";
+                default:
+                    return type;
+            }
+        },
+        ensureUrlWithProtocol(rawUrl, originalType) {
+            const trimmedUrl = rawUrl || "";
+
+            if (!trimmedUrl) {
+                return trimmedUrl;
+            }
+
+            const desiredScheme = originalType === "https" ? "https" : null;
+            const hasScheme = trimmedUrl.includes("://");
+
+            if (!hasScheme) {
+                return `${desiredScheme || "http"}://${trimmedUrl}`;
+            }
+
+            if (desiredScheme) {
+                try {
+                    const parsed = new URL(trimmedUrl);
+                    if (parsed.protocol.replace(":", "") !== desiredScheme) {
+                        parsed.protocol = `${desiredScheme}:`;
+                        return parsed.toString();
+                    }
+                    return trimmedUrl;
+                } catch (error) {
+                    const withoutProtocol = trimmedUrl.replace(/^\w+:\/\//, "");
+                    return `${desiredScheme}://${withoutProtocol}`;
+                }
+            }
+
+            return trimmedUrl;
         },
         createMonitorBase() {
             const monitor = createMonitorDefaults();
@@ -417,50 +455,105 @@ export default {
 
             this.processing = true;
             this.resultLookup = {};
-            let successCount = 0;
 
-            for (const entry of this.entries) {
-                const payload = JSON.parse(JSON.stringify(entry.monitor));
-                const response = await new Promise((resolve) => {
-                    this.$root.add(payload, resolve);
-                });
+            let results;
 
-                const success = Boolean(response?.ok);
-                if (success) {
-                    successCount++;
-                }
-
-                const message = success
-                    ? this.$t("bulkImportStatusSuccess")
-                    : this.formatResponseMessage(response, "bulkImportStatusFailed");
-
-                this.resultLookup = {
-                    ...this.resultLookup,
-                    [entry.line]: {
-                        success,
-                        message,
-                    },
-                };
-            }
-
-            this.processing = false;
-
-            if (!this.entries.length) {
-                toast.info(this.$t("bulkImportNoEntriesToast"));
+            try {
+                results = await this.runImportQueue();
+            } catch (error) {
+                const message = error?.message
+                    ? `${this.$t("bulkImportFailedToast")}: ${error.message}`
+                    : this.$t("bulkImportFailedToast");
+                toast.error(message);
                 return;
+            } finally {
+                this.processing = false;
             }
+
+            const successCount = results.filter((result) => result.success).length;
 
             if (successCount === this.entries.length) {
                 toast.success(this.$t("bulkImportSuccessToast", [ this.entries.length ]));
             } else if (successCount > 0) {
                 toast.warning(this.$t("bulkImportPartialToast", [ successCount, this.entries.length - successCount ]));
             } else {
-                const failureMessages = Object.values(this.resultLookup)
+                const failureMessages = results
                     .filter((result) => !result.success && result.message)
                     .map((result) => result.message);
                 const fallback = this.$t("bulkImportFailedToast");
                 toast.error(failureMessages[0] || fallback);
             }
+        },
+        async runImportQueue() {
+            const entries = this.entries.slice();
+            const concurrency = Math.min(5, Math.max(1, entries.length));
+            const results = [];
+            let cursor = 0;
+
+            const worker = async () => {
+                while (true) {
+                    if (cursor >= entries.length) {
+                        break;
+                    }
+
+                    const entry = entries[cursor];
+                    cursor++;
+                    const result = await this.importSingleEntry(entry);
+                    results.push(result);
+                }
+            };
+
+            const workers = [];
+            for (let i = 0; i < concurrency; i++) {
+                workers.push(worker());
+            }
+
+            await Promise.all(workers);
+
+            return results;
+        },
+        async importSingleEntry(entry) {
+            try {
+                const payload = JSON.parse(JSON.stringify(entry.monitor));
+                const response = await new Promise((resolve, reject) => {
+                    try {
+                        this.$root.add(payload, resolve);
+                    } catch (error) {
+                        reject(error);
+                    }
+                });
+
+                const success = Boolean(response?.ok);
+                const message = success
+                    ? this.$t("bulkImportStatusSuccess")
+                    : this.formatResponseMessage(response, "bulkImportStatusFailed");
+
+                this.recordResult(entry.line, success, message);
+
+                return {
+                    line: entry.line,
+                    success,
+                    message,
+                };
+            } catch (error) {
+                const message = error?.message
+                    ? `${this.$t("bulkImportStatusFailed")}: ${error.message}`
+                    : this.$t("bulkImportStatusFailed");
+
+                this.recordResult(entry.line, false, message);
+
+                return {
+                    line: entry.line,
+                    success: false,
+                    message,
+                };
+            }
+        },
+        recordResult(line, success, message) {
+            this.resultLookup[line] = {
+                success,
+                message,
+            };
         },
         formatResponseMessage(response, fallbackKey) {
             if (!response) {
