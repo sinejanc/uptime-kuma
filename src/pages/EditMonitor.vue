@@ -1,7 +1,18 @@
 <template>
     <transition name="slide-fade" appear>
         <div>
-            <h1 class="mb-3">{{ pageName }}</h1>
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+                <h1 class="mb-0">{{ pageName }}</h1>
+                <button
+                    v-if="isAdd"
+                    class="btn btn-outline-primary"
+                    type="button"
+                    @click="openBulkImport"
+                >
+                    <font-awesome-icon icon="upload" class="me-1" />
+                    {{ $t("bulkImportButton") }}
+                </button>
+            </div>
             <form @submit.prevent="submit">
                 <div class="shadow-box shadow-box-with-fixed-bottom-bar">
                     <div class="row">
@@ -61,6 +72,9 @@
                                     </optgroup>
 
                                     <optgroup :label="$t('Specific Monitor Type')">
+                                        <option value="onvif">
+                                            {{ $t("monitorTypeOnvif") }}
+                                        </option>
                                         <option value="steam">
                                             {{ $t("Steam Game Server") }}
                                         </option>
@@ -131,10 +145,38 @@
                             </div>
 
                             <!-- URL -->
-                            <div v-if="monitor.type === 'http' || monitor.type === 'keyword' || monitor.type === 'json-query' || monitor.type === 'real-browser' " class="my-3">
+                            <div v-if="monitor.type === 'http' || monitor.type === 'keyword' || monitor.type === 'json-query' || monitor.type === 'real-browser' || monitor.type === 'onvif'" class="my-3">
                                 <label for="url" class="form-label">{{ $t("URL") }}</label>
                                 <input id="url" v-model="monitor.url" type="url" class="form-control" pattern="https?://.+" required data-testid="url-input">
+                                <div v-if="monitor.type === 'onvif'" class="form-text">{{ $t("onvifUrlHelp") }}</div>
                             </div>
+
+                            <template v-if="monitor.type === 'onvif'">
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label for="onvif-username" class="form-label">{{ $t("Username") }}</label>
+                                        <input
+                                            id="onvif-username"
+                                            v-model="monitor.basic_auth_user"
+                                            type="text"
+                                            class="form-control"
+                                            :placeholder="$t('Username')"
+                                        >
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label for="onvif-password" class="form-label">{{ $t("Password") }}</label>
+                                        <input
+                                            id="onvif-password"
+                                            v-model="monitor.basic_auth_pass"
+                                            type="password"
+                                            autocomplete="new-password"
+                                            class="form-control"
+                                            :placeholder="$t('Password')"
+                                        >
+                                    </div>
+                                </div>
+                                <div class="form-text">{{ $t("onvifCredentialsHelp") }}</div>
+                            </template>
 
                             <!-- gRPC URL -->
                             <div v-if="monitor.type === 'grpc-keyword' " class="my-3">
@@ -352,6 +394,97 @@
                                         SNMPv2c
                                     </option>
                                 </select>
+                            </div>
+
+                            <div v-if="supportsDeviceProbe" class="my-4">
+                                <h2 class="mb-2">{{ $t("deviceIdentity") }}</h2>
+
+                                <div class="row g-3 align-items-end">
+                                    <div class="col-md-7">
+                                        <label for="onvif-service-path" class="form-label">{{ $t("onvifServicePath") }}</label>
+                                        <input
+                                            id="onvif-service-path"
+                                            v-model="deviceProbeOptions.onvifPath"
+                                            type="text"
+                                            class="form-control"
+                                            placeholder="/onvif/device_service"
+                                        >
+                                        <div class="form-text">{{ $t("onvifServicePathHelp") }}</div>
+                                    </div>
+                                    <div class="col-md-5 col-lg-4">
+                                        <label for="ssh-port" class="form-label">{{ $t("sshPort") }}</label>
+                                        <input
+                                            id="ssh-port"
+                                            v-model.number="deviceProbeOptions.sshPort"
+                                            type="number"
+                                            min="1"
+                                            max="65535"
+                                            class="form-control"
+                                        >
+                                    </div>
+                                </div>
+
+                                <div class="d-flex align-items-center gap-2 mt-3">
+                                    <button class="btn btn-outline-primary" type="button" :disabled="deviceProbeLoading" @click="detectDevice">
+                                        <i v-if="deviceProbeLoading" class="fas fa-spinner fa-spin me-1"></i>
+                                        {{ $t("detectDevice") }}
+                                    </button>
+                                    <span v-if="deviceProbeLoading" class="text-muted">{{ $t("deviceProbeRunning") }}</span>
+                                </div>
+
+                                <div class="form-text mt-2">{{ $t("deviceProbeDescription") }}</div>
+
+                                <div v-if="deviceProbeError" class="alert alert-danger mt-3" role="alert">
+                                    {{ $t("deviceProbeFailed", [ deviceProbeError ]) }}
+                                </div>
+
+                                <div v-if="deviceProbeResult" class="alert alert-info mt-3" role="alert">
+                                    <p class="mb-2">
+                                        <strong>{{ deviceTypeLabel }}</strong>
+                                    </p>
+                                    <ul class="mb-2">
+                                        <li v-if="deviceProbeResult.manufacturer">
+                                            {{ $t("Manufacturer") }}: {{ deviceProbeResult.manufacturer }}
+                                        </li>
+                                        <li v-if="deviceProbeResult.model">
+                                            {{ $t("Model") }}: {{ deviceProbeResult.model }}
+                                        </li>
+                                        <li v-if="deviceProbeResult.serialNumber">
+                                            {{ $t("Serial Number") }}: {{ deviceProbeResult.serialNumber }}
+                                        </li>
+                                        <li v-if="deviceProbeResult.firmwareVersion">
+                                            {{ $t("Firmware") }}: {{ deviceProbeResult.firmwareVersion }}
+                                        </li>
+                                        <li v-if="deviceProbeResult.hardwareId">
+                                            {{ $t("Hardware") }}: {{ deviceProbeResult.hardwareId }}
+                                        </li>
+                                        <li v-if="deviceProbeResult.capabilities?.length">
+                                            {{ $t("deviceCapabilities") }}: {{ capabilityLabels.join(', ') }}
+                                        </li>
+                                        <li v-if="deviceProbeResult.ssh?.banner">
+                                            {{ $t("sshBanner") }}: <code>{{ deviceProbeResult.ssh.banner }}</code>
+                                        </li>
+                                    </ul>
+
+                                    <template v-if="deviceProbeResult.onvif?.streamUri">
+                                        <label for="detected-onvif-stream" class="form-label">{{ $t("onvifStreamUri") }}</label>
+                                        <CopyableInput
+                                            id="detected-onvif-stream"
+                                            :model-value="deviceProbeResult.onvif.streamUri"
+                                            disabled="disabled"
+                                            @update:model-value="noop"
+                                        />
+                                    </template>
+
+                                    <template v-if="deviceProbeAttempts.length">
+                                        <details class="mt-3">
+                                            <summary>{{ $t("deviceProbeAttempts") }}</summary>
+                                            <ul class="mb-0 mt-2 small">
+                                                <li v-for="(attempt, index) in deviceProbeAttempts" :key="`attempt-${index}`">{{ attempt }}</li>
+                                            </ul>
+                                        </details>
+                                    </template>
+                                </div>
                             </div>
 
                             <div v-if="monitor.type === 'smtp'" class="my-3">
@@ -651,7 +784,7 @@
                             </div>
 
                             <!-- Timeout: HTTP / JSON query / Keyword / Ping / RabbitMQ / SNMP only -->
-                            <div v-if="monitor.type === 'http' || monitor.type === 'json-query' || monitor.type === 'keyword' || monitor.type === 'ping' || monitor.type === 'rabbitmq' || monitor.type === 'snmp'" class="my-3">
+                            <div v-if="monitor.type === 'http' || monitor.type === 'json-query' || monitor.type === 'keyword' || monitor.type === 'ping' || monitor.type === 'rabbitmq' || monitor.type === 'snmp' || monitor.type === 'onvif'" class="my-3">
                                 <label for="timeout" class="form-label">
                                     {{ monitor.type === 'ping' ? $t("pingGlobalTimeoutLabel") : $t("Request Timeout") }}
                                     <span v-if="monitor.type !== 'ping'">({{ $t("timeoutAfter", [monitor.timeout || clampTimeout(monitor.interval)]) }})</span>
@@ -680,7 +813,7 @@
                                 </div>
                             </div>
 
-                            <div v-if="monitor.type === 'http' || monitor.type === 'keyword' || monitor.type === 'json-query' || monitor.type === 'redis' " class="my-3 form-check">
+                            <div v-if="monitor.type === 'http' || monitor.type === 'keyword' || monitor.type === 'json-query' || monitor.type === 'redis' || monitor.type === 'onvif'" class="my-3 form-check">
                                 <input id="ignore-tls" v-model="monitor.ignoreTls" class="form-check-input" type="checkbox" value="">
                                 <label class="form-check-label" for="ignore-tls">
                                     {{ monitor.type === "redis" ? $t("ignoreTLSErrorGeneral") : $t("ignoreTLSError") }}
@@ -1152,6 +1285,7 @@
             <ProxyDialog ref="proxyDialog" @added="addedProxy" />
             <CreateGroupDialog ref="createGroupDialog" @added="addedDraftGroup" />
             <RemoteBrowserDialog ref="remoteBrowserDialog" />
+            <BulkMonitorImportDialog ref="bulkDialog" />
         </div>
     </transition>
 </template>
@@ -1161,6 +1295,7 @@ import VueMultiselect from "vue-multiselect";
 import { useToast } from "vue-toastification";
 import ActionSelect from "../components/ActionSelect.vue";
 import CopyableInput from "../components/CopyableInput.vue";
+import BulkMonitorImportDialog from "../components/BulkMonitorImportDialog.vue";
 import CreateGroupDialog from "../components/CreateGroupDialog.vue";
 import NotificationDialog from "../components/NotificationDialog.vue";
 import DockerHostDialog from "../components/DockerHostDialog.vue";
@@ -1177,57 +1312,11 @@ import {
 import { hostNameRegexPattern, relativeTimeFormatter } from "../util-frontend";
 import HiddenInput from "../components/HiddenInput.vue";
 import EditMonitorConditions from "../components/EditMonitorConditions.vue";
+import { monitorDefaults, createMonitorDefaults } from "../util/monitor-defaults";
 
 const toast = useToast();
 
 const pushTokenLength = 32;
-
-const monitorDefaults = {
-    type: "http",
-    name: "",
-    parent: null,
-    url: "https://",
-    method: "GET",
-    ipFamily: null,
-    interval: 60,
-    humanReadableInterval: relativeTimeFormatter.secondsToHumanReadableFormat(60),
-    retryInterval: 60,
-    resendInterval: 0,
-    maxretries: 0,
-    notificationIDList: {},
-    ignoreTls: false,
-    upsideDown: false,
-    expiryNotification: false,
-    maxredirects: 10,
-    accepted_statuscodes: [ "200-299" ],
-    dns_resolve_type: "A",
-    dns_resolve_server: "1.1.1.1",
-    docker_container: "",
-    docker_host: null,
-    proxyId: null,
-    mqttUsername: "",
-    mqttPassword: "",
-    mqttTopic: "",
-    mqttWebsocketPath: "",
-    mqttSuccessMessage: "",
-    mqttCheckType: "keyword",
-    authMethod: null,
-    oauth_auth_method: "client_secret_basic",
-    httpBodyEncoding: "json",
-    kafkaProducerBrokers: [],
-    kafkaProducerSaslOptions: {
-        mechanism: "None",
-    },
-    cacheBust: false,
-    kafkaProducerSsl: false,
-    kafkaProducerAllowAutoTopicCreation: false,
-    gamedigGivenPortOnly: true,
-    remote_browser: null,
-    rabbitmqNodes: [],
-    rabbitmqUsername: "",
-    rabbitmqPassword: "",
-    conditions: []
-};
 
 export default {
     components: {
@@ -1236,6 +1325,7 @@ export default {
         ProxyDialog,
         CopyableInput,
         CreateGroupDialog,
+        BulkMonitorImportDialog,
         NotificationDialog,
         DockerHostDialog,
         RemoteBrowserDialog,
@@ -1268,6 +1358,14 @@ export default {
             },
             draftGroupName: null,
             remoteBrowsersEnabled: false,
+            deviceProbeLoading: false,
+            deviceProbeResult: null,
+            deviceProbeError: null,
+            deviceProbeOptions: {
+                onvifPath: "/onvif/device_service",
+                sshPort: 22,
+            },
+            deviceProbeAttemptsRaw: [],
         };
     },
 
@@ -1293,6 +1391,63 @@ export default {
                 return this.$t("pingTimeoutDescription");
             }
             return "";
+        },
+
+        supportsDeviceProbe() {
+            if (!this.monitor) {
+                return false;
+            }
+
+            if ([ "group", "manual", "push" ].includes(this.monitor.type)) {
+                return false;
+            }
+
+            const hasHostname = Boolean(this.monitor.hostname);
+            const hasUrl = this.monitor.url && this.monitor.url !== "http://" && this.monitor.url !== "https://";
+
+            return hasHostname || hasUrl;
+        },
+
+        deviceTypeLabel() {
+            if (!this.deviceProbeResult) {
+                return this.$t("deviceTypeUnknown");
+            }
+
+            switch (this.deviceProbeResult.type) {
+                case "camera":
+                    return this.$t("deviceTypeCamera");
+                case "network-device":
+                    return this.$t("deviceTypeNetwork");
+                default:
+                    return this.$t("deviceTypeUnknown");
+            }
+        },
+
+        capabilityLabels() {
+            if (!this.deviceProbeResult?.capabilities?.length) {
+                return [];
+            }
+
+            return this.deviceProbeResult.capabilities.map((capability) => {
+                if (capability === "onvif") {
+                    return this.$t("deviceCapabilityONVIF");
+                }
+
+                if (capability === "ssh") {
+                    const port = this.deviceProbeResult?.ssh?.port || this.deviceProbeOptions.sshPort;
+                    return this.$t("deviceCapabilitySSH", [ port ]);
+                }
+
+                return capability;
+            });
+        },
+
+        deviceProbeAttempts() {
+            if (this.deviceProbeResult?.attempts?.length) {
+                return this.deviceProbeResult.attempts;
+            }
+
+            return this.deviceProbeAttemptsRaw;
         },
 
         defaultFriendlyName() {
@@ -1588,6 +1743,45 @@ message HealthCheckResponse {
             }
         },
 
+        "monitor.hostname"() {
+            this.resetDeviceProbeState();
+            this.updateOnvifUrlFromParts();
+        },
+
+        "monitor.port"() {
+            this.resetDeviceProbeState();
+            this.updateOnvifUrlFromParts();
+        },
+
+        "monitor.url"() {
+            this.resetDeviceProbeState();
+            this.syncOnvifOptionsFromUrl();
+        },
+
+        "monitor.basic_auth_user"() {
+            this.resetDeviceProbeState(false);
+        },
+
+        "monitor.basic_auth_pass"() {
+            this.resetDeviceProbeState(false);
+        },
+
+        "deviceProbeOptions.onvifPath"(newPath) {
+            this.deviceProbeAttemptsRaw = [];
+            const normalized = this.normalizeOnvifPath(newPath);
+
+            if (normalized && normalized !== newPath) {
+                this.deviceProbeOptions.onvifPath = normalized;
+                return;
+            }
+
+            this.updateOnvifUrlFromParts();
+        },
+
+        "deviceProbeOptions.sshPort"() {
+            this.deviceProbeAttemptsRaw = [];
+        },
+
         "monitor.ping_count"() {
             if (this.monitor.type === "ping") {
                 this.finishUpdateInterval();
@@ -1617,6 +1811,8 @@ message HealthCheckResponse {
                     this.monitor.port = "1812";
                 } else if (this.monitor.type === "snmp") {
                     this.monitor.port = "161";
+                } else if (this.monitor.type === "onvif") {
+                    this.monitor.port = this.monitor.port || "80";
                 } else {
                     this.monitor.port = undefined;
                 }
@@ -1681,6 +1877,12 @@ message HealthCheckResponse {
             if (oldType && newType !== oldType) {
                 this.monitor.conditions = [];
             }
+
+            if (this.monitor.type === "onvif") {
+                this.ensureOnvifDefaults();
+            }
+
+            this.resetDeviceProbeState();
         },
 
         currentGameObject(newGameObject, previousGameObject) {
@@ -1737,6 +1939,239 @@ message HealthCheckResponse {
         this.kafkaSaslMechanismOptions = kafkaSaslMechanismOptions;
     },
     methods: {
+        openBulkImport() {
+            if (this.$refs.bulkDialog) {
+                this.$refs.bulkDialog.show();
+            }
+        },
+
+        noop() {
+            // no-op used for read-only copyable inputs
+        },
+
+        parseOnvifUrl(url) {
+            if (!url || url === "http://" || url === "https://") {
+                return null;
+            }
+
+            try {
+                const parsed = new URL(url);
+                const result = {
+                    normalizedUrl: parsed.toString(),
+                    hostname: parsed.hostname,
+                    protocol: parsed.protocol.replace(":", ""),
+                    port: parsed.port ? Number(parsed.port) : undefined,
+                    path: parsed.pathname && parsed.pathname !== "/" ? parsed.pathname : "/onvif/device_service",
+                };
+
+                if (!parsed.pathname || parsed.pathname === "/") {
+                    parsed.pathname = "/onvif/device_service";
+                    parsed.search = "";
+                    parsed.hash = "";
+                    result.normalizedUrl = parsed.toString();
+                }
+
+                return result;
+            } catch (error) {
+                return null;
+            }
+        },
+
+        normalizeOnvifPath(path) {
+            if (!path) {
+                return undefined;
+            }
+
+            return path.startsWith("/") ? path : `/${path}`;
+        },
+
+        syncOnvifOptionsFromUrl() {
+            if (this.monitor.type !== "onvif") {
+                return;
+            }
+
+            const parsed = this.parseOnvifUrl(this.monitor.url);
+
+            if (!parsed) {
+                return;
+            }
+
+            if (parsed.normalizedUrl && this.monitor.url !== parsed.normalizedUrl) {
+                this.monitor.url = parsed.normalizedUrl;
+                return;
+            }
+
+            if (!this.monitor.hostname && parsed.hostname) {
+                this.monitor.hostname = parsed.hostname;
+            }
+
+            if (!this.monitor.port && parsed.port) {
+                this.monitor.port = String(parsed.port);
+            }
+
+            if (parsed.path) {
+                this.deviceProbeOptions.onvifPath = parsed.path;
+            }
+        },
+
+        updateOnvifUrlFromParts() {
+            if (this.monitor.type !== "onvif") {
+                return;
+            }
+
+            const host = (this.monitor.hostname || "").trim();
+
+            if (!host) {
+                return;
+            }
+
+            const path = this.normalizeOnvifPath(this.deviceProbeOptions.onvifPath) || "/onvif/device_service";
+            const currentUrl = this.monitor.url || "";
+            const isPlaceholder = !currentUrl || currentUrl === "http://" || currentUrl === "https://";
+
+            if (!isPlaceholder) {
+                return;
+            }
+
+            const protocol = currentUrl.startsWith("https") ? "https" : "http";
+            const port = (this.monitor.port || "").toString().trim();
+            const needsBrackets = host.includes(":") && !host.startsWith("[") && !host.endsWith("]");
+            const formattedHost = needsBrackets ? `[${host}]` : host;
+            const portSegment = port ? `:${port}` : "";
+
+            this.monitor.url = `${protocol}://${formattedHost}${portSegment}${path}`;
+        },
+
+        ensureOnvifDefaults() {
+            if (this.monitor.type !== "onvif") {
+                return;
+            }
+
+            if (!this.monitor.url || this.monitor.url === "https://") {
+                this.monitor.url = "http://";
+            }
+
+            if (!this.deviceProbeOptions.onvifPath) {
+                this.deviceProbeOptions.onvifPath = "/onvif/device_service";
+            }
+
+            this.syncOnvifOptionsFromUrl();
+        },
+
+        prepareOnvifBeforeSubmit() {
+            if (this.monitor.type !== "onvif") {
+                return;
+            }
+
+            const parsed = this.parseOnvifUrl(this.monitor.url);
+
+            if (!parsed) {
+                return;
+            }
+
+            if (parsed.normalizedUrl) {
+                this.monitor.url = parsed.normalizedUrl;
+            }
+
+            if (parsed.hostname) {
+                this.monitor.hostname = parsed.hostname;
+            }
+
+            if (parsed.port) {
+                this.monitor.port = String(parsed.port);
+            }
+
+            if (parsed.path) {
+                this.deviceProbeOptions.onvifPath = parsed.path;
+            }
+        },
+
+        buildDeviceProbePayload() {
+            const url = this.monitor.url;
+            const sanitizedUrl = url && url !== "http://" && url !== "https://" && url.startsWith("http") ? url : undefined;
+
+            const payload = {
+                hostname: this.monitor.hostname || undefined,
+                port: this.monitor.port || undefined,
+                username: this.monitor.basic_auth_user || undefined,
+                password: this.monitor.basic_auth_pass || undefined,
+                onvifPath: this.normalizeOnvifPath(this.deviceProbeOptions.onvifPath) || "/onvif/device_service",
+                sshPort: this.deviceProbeOptions.sshPort || undefined,
+            };
+
+            if (sanitizedUrl) {
+                payload.url = sanitizedUrl;
+
+                try {
+                    const parsed = new URL(sanitizedUrl);
+                    payload.url = parsed.toString();
+                    payload.protocol = parsed.protocol.replace(":", "");
+
+                    if (!payload.hostname) {
+                        payload.hostname = parsed.hostname;
+                    }
+
+                    if (!payload.port && parsed.port) {
+                        payload.port = parsed.port;
+                    }
+
+                    if (!payload.onvifPath && parsed.pathname && parsed.pathname !== "/") {
+                        payload.onvifPath = parsed.pathname;
+                    }
+                } catch (error) {
+                    // Ignore invalid URLs for device probing; server-side validation will handle errors.
+                }
+            }
+
+            if (payload.port === "") {
+                payload.port = undefined;
+            }
+
+            if (payload.sshPort === "") {
+                payload.sshPort = undefined;
+            }
+
+            return payload;
+        },
+
+        detectDevice() {
+            if (!this.supportsDeviceProbe || this.deviceProbeLoading) {
+                return;
+            }
+
+            this.deviceProbeError = null;
+            this.deviceProbeResult = null;
+            this.deviceProbeAttemptsRaw = [];
+            this.deviceProbeLoading = true;
+
+            const payload = this.buildDeviceProbePayload();
+
+            this.$root.getSocket().emit("probeDeviceIdentity", payload, (res) => {
+                this.deviceProbeLoading = false;
+
+                if (res.ok) {
+                    this.deviceProbeResult = res.result;
+                    this.deviceProbeAttemptsRaw = res.result?.attempts || [];
+                } else {
+                    this.deviceProbeError = res.msg;
+                    this.deviceProbeAttemptsRaw = res.attempts || [];
+                }
+            });
+        },
+
+        resetDeviceProbeState(clearAttempts = true) {
+            if (this.deviceProbeLoading) {
+                return;
+            }
+
+            this.deviceProbeResult = null;
+            this.deviceProbeError = null;
+
+            if (clearAttempts) {
+                this.deviceProbeAttemptsRaw = [];
+            }
+        },
+
         /**
          * Initialize the edit monitor form
          * @returns {void}
@@ -1744,13 +2179,7 @@ message HealthCheckResponse {
         init() {
             if (this.isAdd) {
 
-                this.monitor = {
-                    ...monitorDefaults,
-                    ping_count: 3,
-                    ping_numeric: true,
-                    packetSize: 56,
-                    ping_per_request_timeout: 2,
-                };
+                this.monitor = createMonitorDefaults();
 
                 if (this.$root.proxyList && !this.monitor.proxyId) {
                     const proxy = this.$root.proxyList.find(proxy => proxy.default);
@@ -1777,6 +2206,10 @@ message HealthCheckResponse {
                         }
 
                         this.monitor = res.monitor;
+
+                        if (this.monitor.type === "onvif") {
+                            this.ensureOnvifDefaults();
+                        }
 
                         if (this.isClone) {
                             /*
@@ -1930,6 +2363,8 @@ message HealthCheckResponse {
             if (this.monitor.url) {
                 this.monitor.url = this.monitor.url.trim();
             }
+
+            this.prepareOnvifBeforeSubmit();
 
             let createdNewParent = false;
 
